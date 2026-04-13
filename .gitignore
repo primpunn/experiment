@@ -1,0 +1,41 @@
+# Large binary / compiled files
+*.pt
+*.pth
+*.so
+*.so.*
+*.o
+*.a
+
+# Build directories
+claudetry/librealsense/
+claudetry/librealsense_v2531/
+
+# These have their own git repos
+Depth/
+claudetry/
+
+# Point cloud outputs and saved data (large)
+claudetry/output/
+claudetry/pointclouds/
+both/saved_data/
+Depth/saved_data/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# PDFs (large documents)
+*.pdf
+*.docx
+
+# Images not needed in repo
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.npy
+*.ply
+
+# Misc
+.DS_Store
