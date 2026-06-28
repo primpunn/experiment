@@ -1,0 +1,58 @@
+  Workflow:
+  # 1. Flash fsr_11may.ino to ESP32
+  # 2. Calibrate (once per patient/placement)
+  python calibrate.py
+  # 3. Record therapy sessions  
+  python record.py -o sessions/session_001.csv --live
+  # 4. Post-process
+  python preprocess.py sessions/session_001.csv
+
+----------------------------------------------------------------------------------------------------------------
+
+Run them sequentially, never simultaneously — each script needs exclusive
+  access to the serial port.
+
+  Here's the full workflow:
+
+  ---
+  Step 1 — Calibrate (once per patient/placement, ~2-3 hours)
+  python calibrate.py
+  # Choose option 1 → runs Phase 0 → 1 → 2 → fit
+  # Choose option 2 → validation (Phase 3)  ← do this too
+  # Choose option 3 → recheck baseline drift ← do this right before each 
+  recording session
+  # Choose q → quit
+  This saves calibration_coeffs.json. Do this once and reuse it as long as:
+  - Same patient, same body position, same strap tension
+  - Session is ≤2 hours (recheck drift if longer)
+
+  ---
+  Step 2 — Recheck baseline before each recording session
+  python calibrate.py   # option 3 only
+  Quick ~2 min check. If any sensor drifted >2%, re-run option 1 for those
+  sensors before recording.
+
+  ---
+  Step 3 — Record the therapy session
+  python record.py -o sessions/session_001.csv --live
+  # Ctrl+C when done
+  Runs alone. --live shows real-time force numbers using the calibration from
+  step 1.
+
+  ---
+  Step 4 — Post-process after recording is done
+  python preprocess.py sessions/session_001.csv
+  Run this after record.py has stopped. It reads the saved CSV and outputs
+  sessions/session_001_forces.csv with F per sensor and F_calf / F_foot totals.
+
+  ---
+  Summary timeline:
+
+  Day 1 (first time):
+    calibrate.py → option 1 (calibrate) → option 2 (validate) → q
+
+  Each therapy session:
+    calibrate.py → option 3 (drift check) → q
+    record.py    → record session → Ctrl+C
+    preprocess.py → process the saved CSV
+

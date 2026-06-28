@@ -4,102 +4,110 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a robotics research project for a 1st paper on **dual-arm physical therapy assistance** — specifically, a robot performing calf-stretching on a human patient using two arms (one lifts the leg at the ankle, one presses the foot). The pipeline spans data collection, force optimization, simulation, and real-hardware control.
+Robotics research project for a **1st paper on dual-arm physical therapy assistance** — a robot performing calf-stretching on a human patient using two arms (one lifts the ankle, one presses the foot). This repo currently covers the **data collection pipeline** (`both/`). Downstream work (force optimization, simulation, control) is planned but not yet in this repo.
 
 ## Environment
 
-- Python 3.13 (Miniconda), Ubuntu 22.04, kernel 6.8
-- **Critical**: The pip `pyrealsense2` package does **not** support the L515 camera. All L515 scripts must use the locally built librealsense v2.54.2:
-  ```python
-  import sys
-  sys.path.insert(0, '/home/primpunn/Desktop/claudetry/librealsense/build/release')
-  ```
-- The **D435i** works fine with standard pip `pyrealsense2`.
+- **Conda environment:** `massage` (Python 3.13, Ubuntu 22.04)
+- **Run all scripts with:** `conda activate massage`
+- **Critical:** The pip `pyrealsense2` does **not** support L515. The locally built librealsense at `/home/primpunn/librealsense/build/Release` must be on `sys.path` first. `both/data_recording.py` does this automatically via `sys.path.insert(0, '/home/primpunn/librealsense/build/Release')`.
 - udev rules: `/etc/udev/rules.d/99-realsense-libusb.rules`
 
-## Running the scripts
+## Running the Scripts
 
 ```bash
-# Test camera connection
-python Depth/test_camera.py
+conda activate massage
+cd /home/primpunn/experiment/both
 
-# Live pose estimation (D435i only, YOLOv8 + Madgwick IMU)
-python Depth/pose_estimation.py
+# Record data (default 200 frames, live preview)
+python data_recording.py -o ./saved_data
 
-# Full data recording (L515 + D435i + MediaPipe)
-python Depth/data_recording.py -s -o ./Depth/saved_data
-python Depth/data_recording.py -s -v -o ./Depth/saved_data --total_frame 5000
-python Depth/data_recording.py -s -o ./Depth/saved_data --l515_serial ABC123 --d435i_serial XYZ456
+# Record with custom frame count, no preview
+python data_recording.py -o ./saved_data --total_frames 1000 --no-preview
 
-# L515 point cloud capture (claudetry subfolder)
-python claudetry/l515_pointcloud.py
+# Quick post-hoc inspection of a saved session
+python analyze.py   # edit base path in script to point at target session
 ```
 
-## Code Architecture
+### Startup sequence for `data_recording.py`
 
-### Data Collection (`Depth/`)
+1. Both cameras warm up for 2 seconds (60-frame discard)
+2. **Init phase**: live preview windows open — position D435i (head) so **ArUco ID10** is visible in **both** cameras simultaneously, then press `S` or ENTER. The script averages 60 valid frames to compute static transforms.
+3. **Recording phase**: perform the task; press `Q` or `Ctrl+C` to stop. All frames are buffered in RAM then flushed to disk via `ThreadPoolExecutor`.
 
-**Two-camera pipeline:**
-- **L515** (LiDAR) → RGB-D scene capture: `color_image.jpg` + `depth_image.png`
-- **D435i** (depth + IMU) → human pose via MediaPipe + IMU orientation: `pose.txt` + `*_arm_keypoints.txt`
+## Code Architecture (`both/`)
 
-**IMU fusion:** `data_recording.py` uses a **complementary filter** (accel + gyro SLERP blend, α=0.98); `pose_estimation.py` uses a **Madgwick filter** (β=0.1). Both output a 4×4 rotation matrix — translation is zero (IMU does not track position).
+### `data_recording.py` — the main pipeline
 
-**Keypoints extracted (MediaPipe, 5 joints per arm):** elbow, wrist, index_tip, pinky_tip, thumb_tip — stored as (5,3) world coordinates in metres.
+**Two-camera setup:**
+- **L515** (floor, static) → RGB scene + LiDAR point cloud
+- **D435i** (head-mounted, physically rotated 90° CW) → arm pose tracking via ArUco
 
-**Per-frame output structure:**
+**ArUco marker assignment (`DICT_4X4_100`):**
+
+| ID | Role | Size |
+|----|------|------|
+| 0 | right wrist | 3 cm |
+| 1 | right elbow | 3 cm |
+| 2 | left wrist | 3 cm |
+| 3 | left elbow | 3 cm |
+| 10 | world frame origin | 10 cm |
+| 11,13,14,16,17,20,21 | extra floor markers (re-localization) | 10 cm |
+
+**Transform convention:** `T_A_B` transforms points FROM frame B TO frame A.
+
+**Per-frame pose computation:**
 ```
-saved_data/frame_<N>/
-├── color_image.jpg          # RGB from L515 (960×540)
-├── depth_image.png          # uint16 depth from L515 (÷4 metric)
-├── pose.txt                 # 4×4 rotation matrix from D435i IMU
-├── right_arm_keypoints.txt  # (5, 3) right arm 3D world coords [m]
-└── left_arm_keypoints.txt   # (5, 3) left arm 3D world coords [m]
+T_world_L515  — fixed, computed once at init from L515 seeing ID10
+T_world_head  — updated every frame via any visible floor marker:
+                T_world_head = T_world_IDk @ inv(T_head_IDk)
+T_world_arm   = T_world_head @ T_head_arm   (for each arm marker in D435i view)
 ```
 
-Frames are buffered in RAM and flushed to disk in parallel via `ThreadPoolExecutor` after recording completes.
+**D435i rotation correction:** physical 90° CW mount → all D435i images rotated 90° CCW before ArUco detection. Intrinsics adjusted accordingly (`fx↔fy`, `cx↔cy` with axis flip) via `rotate_intrinsics_90ccw()`.
 
-### Research Baseline (`Baseline Idea` document)
+**Point cloud:** L515 depth back-projected to camera frame, transformed to world frame via `T_world_L515`, randomly downsampled to `PC_NUM_POINTS = 8192`.
 
-**Baseline 1 — Force Allocation Optimization (FAO):**
-- Models the leg as a rigid shank–foot link with two contact points (ankle = Arm1, toe = Arm2)
-- Solves a QP (via `cvxpy`) for optimal contact forces under friction cone + force limit constraints
-- Two phases: *Lift* (Arm2=0, find F1_lift) and *Press* (Arm2 fixed, find F1_hold and ΔF1)
-- Optional MuJoCo 3.x validation of "sag" before/after compensation
+### Output structure per session
 
-**Baseline 2 — Basic Control + Collision-Free Trajectory:**
-- Uses FAO force references as feed-forward in simple force–position control
-- Dual-arm trajectory planning via MoveIt 2 to avoid self-collision
-- Tested in simulation (MuJoCo or Gazebo + ROS 2 Humble) then on real hardware
+```
+saved_data/<YYYY-MM-DD_HH-MM-SS>/
+├── T_world_L515.txt        # L515 camera pose in world (4×4), fixed for session
+├── T_world_ID<k>.txt       # each floor marker pose in world (4×4), fixed
+└── frame_<N>/
+    ├── color_image.png     # L515 BGR, 1280×720
+    ├── depth_image.png     # D435i depth uint16, 720×1280 (after 90° CCW rotation)
+    ├── pointcloud.npy      # (8192, 6) float32: [X,Y,Z,B,G,R] in world frame
+    ├── pose.txt            # D435i camera (head) pose in world (4×4, full 6-DOF)
+    ├── pose_right_wrist.txt  # ArUco ID0 in world (4×4), NaN matrix if not detected
+    ├── pose_right_elbow.txt  # ArUco ID1 in world (4×4)
+    ├── pose_left_wrist.txt   # ArUco ID2 in world (4×4)
+    └── pose_left_elbow.txt   # ArUco ID3 in world (4×4)
+```
 
-### Hardware in Use
+**Important:** `pose.txt` stores a **full 6-DOF** camera pose (translation is the real head position in world frame, not zero). This is different from any IMU-only approach.
 
-| Camera | SDK | Use |
-|--------|-----|-----|
-| Intel RealSense L515 | librealsense v2.54.2 (local build, RSUSB) | RGB-D scene capture |
-| Intel RealSense D435i | pip `pyrealsense2` | Human pose + IMU |
+### Key classes and functions
 
-L515 support was dropped in SDK v2.55.1+. The local build at `/home/primpunn/Desktop/claudetry/librealsense/` was compiled with `FORCE_RSUSB_BACKEND=true` and `BUILD_PYTHON_BINDINGS=true`.
+| Symbol | File | Purpose |
+|--------|------|---------|
+| `DualCameraRecorder` | `data_recording.py:259` | Main class — camera init, per-frame recording, disk flush |
+| `initialize_transforms()` | `data_recording.py:350` | Init phase: compute and save static `T_world_L515` and floor marker transforms |
+| `_update_head_pose()` | `data_recording.py:519` | Re-localizes D435i head pose from any visible floor marker each frame |
+| `record_frame()` | `data_recording.py:537` | Captures one frame from both cameras, runs ArUco detection, buffers result |
+| `depth_to_pointcloud_cam()` | `data_recording.py:219` | Back-projects L515 aligned depth to (N,6) XYZbgr in camera frame |
+| `detect_markers()` | `data_recording.py:148` | OpenCV ArUco detection → `{id: T_cam_marker (4×4)}` |
+| `rotate_intrinsics_90ccw()` | `data_recording.py:108` | Adjusts `rs.intrinsics` after 90° CCW image rotation |
 
 ## GitHub Workflow
 
-After **any** change to files in this folder (`/home/primpunn/Desktop/1st paper/`), always git push to:
-
-**`https://github.com/primpunn/experiment.git`**
-
 ```bash
-cd "/home/primpunn/Desktop/1st paper"
+cd /home/primpunn/experiment
 git add -A
 git commit -m "your message"
 git push origin main
 ```
 
-If the repo is not yet initialized locally:
-```bash
-cd "/home/primpunn/Desktop/1st paper"
-git init
-git remote add origin https://github.com/primpunn/experiment.git
-git add -A
-git commit -m "initial commit"
-git push -u origin main
-```
+Remote: `https://github.com/primpunn/experiment.git`
+
+The `.gitignore` excludes all `saved_data/` directories, `.npy`, `.png`, `.jpg`, `.ply` files (data is not tracked in git).

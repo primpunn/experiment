@@ -6,10 +6,10 @@ Setup:
   - L515 placed on the floor as a static third-person-view camera.
   - D435i mounted on the human head, physically rotated 90° clockwise.
   - ArUco markers (DICT_4X4_100):
-      right wrist  (30 mm): ID  0,  1,  2,  3
-      right elbow  (30 mm): ID  4,  5,  6,  7
-      left  wrist  (30 mm): ID  8,  9, 12, 15
-      left  elbow  (30 mm): ID 18, 19, 22, 23
+      right wrist  (45 mm): ID  0,  1,  2,  3
+      right elbow  (45 mm): ID  4,  5,  6,  7
+      left  wrist  (45 mm): ID  8,  9, 12, 15
+      left  elbow  (45 mm): ID 18, 19, 22, 23
       floor/world  (95 mm): ID 10 (world origin), 11, 13, 14, 16, 17, 20, 21
 
 Collection steps:
@@ -40,8 +40,8 @@ D435i rotation note:
 
 Usage:
   conda activate massage
-  python data_recording.py -o ./saved_data --total_frames 1000
-  python data_recording.py -o ./saved_data          # run until Ctrl+C
+  python data_recording_45mm.py -o ./saved_data --total_frames 1000
+  python data_recording_45mm.py -o ./saved_data          # run until Ctrl+C
 """
 
 import os
@@ -62,13 +62,10 @@ import pyrealsense2 as rs
 # Display scale: resize preview windows to this height (keeps aspect ratio)
 PREVIEW_H = 480
 
-# Depth preview: pixels farther than this (m) are shown black
-DEPTH_VIS_MAX_M = 3.0
-
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 ARUCO_DICT_ID        = cv2.aruco.DICT_4X4_100
-ARM_MARKER_SIZE_M    = 0.030    # 30 mm — arm markers
+ARM_MARKER_SIZE_M    = 0.045    # 45 mm — arm markers
 FLOOR_MARKER_SIZE_M  = 0.095    # 95 mm — floor markers
 WORLD_ID        = 10            # ID10 defines the world frame origin
 FLOOR_IDS       = [10, 11, 13, 14, 16, 17, 20, 21]   # IDs placed on floor (static)
@@ -254,42 +251,6 @@ def draw_preview(bgr_img: np.ndarray,
     return cv2.resize(vis, (new_w, PREVIEW_H))
 
 
-def draw_depth_preview(depth_img: np.ndarray,
-                       depth_scale: float,
-                       status_lines: list,
-                       max_depth_m: float = DEPTH_VIS_MAX_M) -> np.ndarray:
-    """
-    Colorize a raw uint16 depth image for live preview (JET colormap, near=red
-    far=blue), so the operator can visually check that a human stands out
-    clearly from walls/background. Pixels with no return or beyond
-    max_depth_m are shown black. Draws the same status overlay as
-    draw_preview and resizes to PREVIEW_H.
-    """
-    depth_m = depth_img.astype(np.float32) * depth_scale
-    valid   = (depth_m > 0) & (depth_m <= max_depth_m)
-
-    norm     = np.clip(depth_m / max_depth_m, 0.0, 1.0)
-    depth_u8 = ((1.0 - norm) * 255).astype(np.uint8)   # near → high value → red in JET
-    vis      = cv2.applyColorMap(depth_u8, cv2.COLORMAP_JET)
-    vis[~valid] = 0
-
-    h, w = vis.shape[:2]
-
-    # Status overlay — semi-transparent dark bar at top (matches draw_preview)
-    bar_h = 28 * (len(status_lines) + 1)
-    overlay = vis.copy()
-    cv2.rectangle(overlay, (0, 0), (w, bar_h), (30, 30, 30), -1)
-    cv2.addWeighted(overlay, 0.55, vis, 0.45, 0, vis)
-
-    for i, (text, color) in enumerate(status_lines):
-        cv2.putText(vis, text, (8, 22 + i * 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-    scale = PREVIEW_H / h
-    new_w = int(w * scale)
-    return cv2.resize(vis, (new_w, PREVIEW_H))
-
-
 # ── Point cloud helpers ────────────────────────────────────────────────────────
 
 def depth_to_pointcloud_cam(depth_img: np.ndarray,
@@ -450,7 +411,6 @@ class DualCameraRecorder:
 
         cv2.namedWindow('L515 (floor)',  cv2.WINDOW_AUTOSIZE)
         cv2.namedWindow('D435i (head)',  cv2.WINDOW_AUTOSIZE)
-        cv2.namedWindow('L515 Depth',    cv2.WINDOW_AUTOSIZE)
 
         # ── Phase A: live preview until user signals ready ─────────────────────
         collecting = False
@@ -469,7 +429,6 @@ class DualCameraRecorder:
             # ── L515 ──────────────────────────────────────────────
             l515_aligned = self.l515_align.process(l515_frames)
             l515_color   = np.asanyarray(l515_aligned.get_color_frame().get_data())  # RGB
-            l515_depth   = np.asanyarray(l515_aligned.get_depth_frame().get_data())  # uint16
             l515_bgr     = l515_color[:, :, ::-1].copy()
             l515_gray    = cv2.cvtColor(l515_color, cv2.COLOR_RGB2GRAY)
             l515_det     = detect_markers(l515_gray, self.l515_K, self.l515_D)
@@ -526,14 +485,9 @@ class DualCameraRecorder:
             # ── Show windows ──────────────────────────────────────
             l515_preview  = draw_preview(l515_bgr,  l515_det, [WORLD_ID], l515_status)
             d435i_preview = draw_preview(d435i_rot, d_det,    [WORLD_ID], d435i_status)
-            depth_preview = draw_depth_preview(
-                l515_depth, self.l515_depth_scale,
-                [(f"L515 depth (<{DEPTH_VIS_MAX_M:.1f} m, near=red far=blue)",
-                  (200, 200, 200))])
 
             cv2.imshow('L515 (floor)', l515_preview)
             cv2.imshow('D435i (head)', d435i_preview)
-            cv2.imshow('L515 Depth',   depth_preview)
 
             key = cv2.waitKey(1) & 0xFF
 
@@ -592,15 +546,6 @@ class DualCameraRecorder:
         np.savetxt(str(self.output_dir / 'T_world_L515.txt'), self.T_world_L515)
         for fid, T in self.T_world_floor.items():
             np.savetxt(str(self.output_dir / f'T_world_ID{fid}.txt'), T)
-
-        # Save L515 color intrinsics (fx, fy, ppx, ppy, width, height) — used to
-        # re-project world-frame points back to color-image pixel coordinates
-        # (e.g. for MediaPipe-based person segmentation in estimate_shape.py)
-        intr = self.l515_color_intr
-        np.savetxt(str(self.output_dir / 'L515_intrinsics.txt'),
-                   np.array([intr.fx, intr.fy, intr.ppx, intr.ppy,
-                             intr.width, intr.height]),
-                   header='fx fy ppx ppy width height')
 
         visible = sorted(self.T_world_floor.keys())
         print(f"\nInitialization complete.")
@@ -779,14 +724,9 @@ class DualCameraRecorder:
 
             l515_preview  = draw_preview(color_image,     l515_det, ARM_IDS, l515_status)
             d435i_preview = draw_preview(d435i_color_rot, d_det,    ARM_IDS, d435i_status)
-            depth_preview = draw_depth_preview(
-                l515_depth_align, self.l515_depth_scale,
-                [(f"L515 depth (<{DEPTH_VIS_MAX_M:.1f} m, near=red far=blue)",
-                  (200, 200, 200))])
 
             cv2.imshow('L515 (floor)', l515_preview)
             cv2.imshow('D435i (head)', d435i_preview)
-            cv2.imshow('L515 Depth',   depth_preview)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q') or key == ord('Q'):
                 raise KeyboardInterrupt("Quit from preview window.")

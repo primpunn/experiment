@@ -37,5 +37,21 @@ __pycache__/
 *.npy
 *.ply
 
+# Large data directories (recordings, calibration sessions, generated output)
+both/calibration_data/
+both/calibration_session/
+both/output/
+both/output_smoketest/
+both/frames/
+FSR/fsr_11may/sessions/
+
+# Binary model/video files
+*.tflite
+*.task
+*.mp4
+*.zip
+*.svg
+
 # Misc
 .DS_Store
+both/0]

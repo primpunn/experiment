@@ -1,0 +1,36 @@
+  How to use it                                                                                                                                                                                             
+               
+  Step 1 — Save the serial log to a file during Phase 3 (two options):                                                                                                                                      
+                                                                                                                                                                                                            
+  # Option A: In Arduino IDE → Serial Monitor → right-click → Save as → phase3_log.txt
+                                                                                                                                                                                                            
+  # Option B: command line while ESP32 is connected                                                                                                                                                       
+  python -m serial.tools.miniterm --raw /dev/ttyUSB0 115200 | tee phase3_log.txt                                                                                                                            
+  # (Ctrl+] to stop)                                                                                                                                                                                        
+                                                                                                                                                                                                            
+  Step 2 — Run the script:                                                                                                                                                                                  
+                                                                                                                                                                                                            
+  conda activate massage                                                                                                                                                                                  
+  cd /home/primpunn/experiment/FSR/fsr406_calibration                                                                                                                                                       
+  
+  # Basic (V₀ read from log's S,BASELINE line automatically)                                                                                                                                                
+  python fsr406_phase4_calibration.py phase3_log.txt                                                                                                                                                      
+                                                                                                                                                                                                            
+  # Override V₀ if you didn't run Phase 2 in the same session                                                                                                                                               
+  python fsr406_phase4_calibration.py phase3_log.txt --v0 1234
+                                                                                                                                                                                                            
+  # Fit loading/unloading separately to check hysteresis                                                                                                                                                  
+  python fsr406_phase4_calibration.py phase3_log.txt --seq loading                                                                                                                                          
+  python fsr406_phase4_calibration.py phase3_log.txt --seq unloading                                                                                                                                        
+  
+  # Save figure instead of displaying                                                                                                                                                                       
+  python fsr406_phase4_calibration.py phase3_log.txt --out calibration.png                                                                                                                                
+                                                                                                                                                                                                            
+  Step 3 — Copy the printed #define lines into fsr406_calibration.ino:                                                                                                                                      
+                                                                                                                                                                                                            
+    ── Copy these lines into fsr406_calibration.ino ──                                                                                                                                                      
+    #define CALIB_V0_MV   1234                                                                                                                                                                            
+    #define CALIB_A       12.34567f                                                                                                                                                                         
+    #define CALIB_B       1.87654f
+                                                                                                                                                                                                            
+  Then reflash and send V to start Phase 5 validation.   

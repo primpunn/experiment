@@ -1,0 +1,5 @@
+1. interpolate_poses.py ใช้ SLERP สำหรับ rotation + linear สำหรับ translation ในการเติมที่ < 5 เฟรม และไม่มี artifatcs detector
+
+2. interpolate_modify.py มี artifatcs detector และใช้วิธี interpolate หลากหลายวิธีแล้วแต่จำนวนเฟรมที่หายไป อิงตามเปเปอร์ 1 และ 3
+
+3. check_anomalies.py ไว้ใช้เช็คว่ามี artifacts แต่ละแบบเกิดขึ้นแบบละกี่เฟรม

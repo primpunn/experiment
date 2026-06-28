@@ -1,0 +1,181 @@
+ได้เลยค่ะ ขออธิบายแบบละเอียดทีละ step เลย
+
+***
+
+## Phase 2 — บันทึก Baseline (Zero Reference)
+
+**เป้าหมาย:** หาค่า V ตอนที่ sensor อยู่บนผิวขาพร้อม strap แต่ยังไม่มีแรงจากมือหมอนวด นี่คือ "ศูนย์" ของระบบ [fsrexpert](https://www.fsrexpert.com/easy-steps-to-calibrate-fsr-with-arduino/)
+
+### ขั้นตอน
+
+1. **ให้ผู้ป่วยนอนนิ่ง** ในท่าที่จะใช้วัดจริง (เช่น นอนหงาย ขาเหยียด)
+2. **ติด sensor + strap** บนผิวขาตำแหน่งที่จะวัด ความตึง strap ให้เท่ากับที่จะใช้จริงทุกครั้ง
+3. **รอ 5–10 นาที** โดยไม่แตะ sensor เพื่อให้อุณหภูมิ sensor ปรับเข้าสู่อุณหภูมิผิวหนัง (~34–37°C) เพราะ FSR มีค่าความต้านทานเปลี่ยนตามอุณหภูมิ [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)
+4. **บันทึกค่า V_baseline ทุก 30 วินาที นาน 5 นาที** = 10 ค่า
+5. คำนวณ **mean (V₀)** และ **SD**
+
+**เกณฑ์ตัดสิน:**
+- SD < 2% ของ full-scale range → ผ่าน เดินหน้าได้
+- SD ≥ 2% → ตรวจสอบ: housing หลวมไหม, strap ตึงพอไหม, มี preload ผิดปกติไหม [fsrexpert](https://www.fsrexpert.com/easy-steps-to-calibrate-fsr-with-arduino/)
+
+> **V₀ นี้ใช้ทำอะไร:** ทุกค่า F ที่คำนวณจะเป็น \(F(V - V_0)\) ไม่ใช่ \(F(V)\) ดิบ เพื่อหักลบ preload จาก strap ออก
+
+***
+
+## Phase 3 — Loading Protocol ด้วย Known Force
+
+**เป้าหมาย:** สร้างชุดข้อมูลคู่ \((V_i, F_i)\) ที่ครอบคลุมช่วงแรงจริง ทั้ง loading และ unloading [citeseerx.ist.psu](https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=0c3d29ada2c89732bcaa1c676d20d0f215a30763)
+
+### เตรียมอุปกรณ์ก่อนเริ่ม
+
+- **น้ำหนักมาตรฐาน** ที่ชั่งรู้ค่าแล้วเป็น กรัม → แปลง N ด้วย \(F = m \times 9.81\) เช่น 510 g ≈ 5 N, 1020 g ≈ 10 N, 2040 g ≈ 20 N
+- **Applicator plate แข็ง** ขนาด 38×38 mm วางบน island เพื่อกระจายแรงสม่ำเสมอ ป้องกันการกด point load ลงจุดเดียว [sciencedirect](https://www.sciencedirect.com/science/article/abs/pii/S0021929008004879)
+- ESP32 บันทึก V_out ต่อเนื่องที่ sampling rate ≥ 10 Hz
+
+### ลำดับแรง
+
+```
+Loading:    0 → 5 → 10 → 20 → 30 → 40 → 50 → 60 → 80 N
+Unloading:  80 → 60 → 50 → 40 → 30 → 20 → 10 → 5 → 0 N
+```
+
+ทำ **3 reps** (3 รอบ loading–unloading ติดกัน) [citeseerx.ist.psu](https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=0c3d29ada2c89732bcaa1c676d20d0f215a30763)
+
+### วิธีทำทีละระดับแรง
+
+```
+Step A: วาง applicator plate บน island ตรงกลาง
+Step B: ค่อย ๆ เพิ่มน้ำหนักขึ้นทีละชิ้น อย่ากระแทก
+Step C: รอ 10 วินาที → ให้ FSR creep stabilize
+Step D: บันทึก V_out 10 ค่า ใน 5 วินาที (อ่านทุก 0.5 วินาที)
+Step E: คำนวณ mean V ของ 10 ค่านั้น → บันทึกเป็น V(Fi)
+Step F: ถอดน้ำหนัก แล้วเดินไประดับถัดไป
+```
+
+> **ทำไมต้องรอ 10 วินาที:** FSR มีพฤติกรรม creep คือค่า V ยังเปลี่ยนอยู่ใน 3–8 วินาทีแรกหลังวางน้ำหนัก ถ้าอ่านเร็วเกินจะได้ค่าสูงกว่าจริง [pubmed.ncbi.nlm.nih](https://pubmed.ncbi.nlm.nih.gov/19019374/)
+
+### Data ที่ควรได้ในตอนท้าย
+
+ต่อ 1 rep มี 17 data points (9 loading + 8 unloading) × 3 reps = **51 data points ต่อ sensor ต่อตำแหน่ง** ก่อน average
+
+***
+
+## Phase 4 — สร้าง Calibration Equation
+
+**เป้าหมาย:** หาสมการ \(F = f(V)\) ที่ดีที่สุดสำหรับ sensor ตัวนั้น ตำแหน่งนั้น บนผิวคนนั้น [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)
+
+### 4a) เตรียม Dataset
+
+Average V ของ 3 reps ในแต่ละระดับแรงและทิศ:
+
+| F (N) | V_loading (mean) | V_unloading (mean) |
+|---|---|---|
+| 0 | V₀ | V₀ |
+| 5 | V₅ᴸ | V₅ᵁ |
+| 10 | V₁₀ᴸ | V₁₀ᵁ |
+| ... | ... | ... |
+| 80 | V₈₀ᴸ | V₈₀ᵁ |
+
+### 4b) เลือก Model ตามความสามารถ
+
+**Option A — Power-law (ง่าย เหมาะกับ prototype)**
+
+\[
+F = a \cdot (V - V_0)^b
+\]
+
+- หา \(a, b\) ด้วย log-linearization: plot \(\ln(F)\) vs \(\ln(V-V_0)\) แล้วทำ linear regression
+- เก็บ \(a, b\) แยกทีละ sensor [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)
+
+**Option B — 4th-order Polynomial + Moving Integral (Hall, แม่นยำที่สุด)**
+
+\[
+F = \sum_{k=0}^{4} a_k V^k + \sum_{k=1}^{4} b_k I^k
+\]
+
+โดย \(I\) คือ moving integral ของ \(V\) ย้อนหลัง 0.5 วินาที:
+
+\[
+I(t) = \int_{t-0.5}^{t} w(\tau) \cdot V(\tau) \, d\tau
+\]
+
+- \(w(\tau)\) = น้ำหนักเพิ่มเชิงเส้นจาก 0 (ที่ \(t-0.5\)) ถึง 1 (ที่ \(t\))
+- ใน ESP32: คำนวณ discrete sum ของ V ย้อนหลัง 50 samples (ที่ 100 Hz) คูณด้วย weight ramp [citeseerx.ist.psu](https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=0c3d29ada2c89732bcaa1c676d20d0f215a30763)
+
+### 4c) ประเมินคุณภาพ Model
+
+- คำนวณ **RMSE** และ **R²** ของ fit
+- เป้าหมาย: R² > 0.99, RMSE < 1 N ในช่วง 0–80 N [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)
+- ถ้าไม่ผ่าน → เพิ่ม degree polynomial หรือแยก fit loading/unloading
+
+***
+
+## Phase 5 — Validation บนผิวจริง
+
+**เป้าหมาย:** ทดสอบว่าสมการที่ได้ทำนายได้แม่นยำในสภาวะจริงและแรงที่ไม่เคยเห็นมาก่อน [citeseerx.ist.psu](https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=0c3d29ada2c89732bcaa1c676d20d0f215a30763)
+
+### ขั้นตอน
+
+1. **ติด sensor กลับที่ตำแหน่งเดิม** บนขาผู้ป่วยคนเดิม ท่าเดิม strap ตึงเดิม
+2. **เลือก 5 ค่าแรงที่ไม่ได้ใช้ใน calibration** เช่น 8, 15, 25, 45, 70 N
+3. กด sensor ด้วย force gauge อ้างอิง หรือชั่งน้ำหนักมาแล้ว → บันทึก V → คำนวณ F_pred ด้วยสมการที่ได้
+4. คำนวณ:
+
+\[
+\text{RMSE} = \sqrt{\frac{1}{n}\sum_{i=1}^{n}(F_{\text{pred},i} - F_{\text{true},i})^2}
+\]
+
+\[
+\% \text{error}_i = \frac{|F_{\text{pred},i} - F_{\text{true},i}|}{F_{\text{true},i}} \times 100
+\]
+
+**เกณฑ์ผ่าน:**
+- RMSE < 3 N ในช่วงทั้งหมด [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)
+- % error < 10% ทุก data point [citeseerx.ist.psu](https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=0c3d29ada2c89732bcaa1c676d20d0f215a30763)
+- ถ้าไม่ผ่าน → กลับไป Phase 3 เก็บ data เพิ่มหรือ recalibrate
+
+### ทดสอบ Dynamic (สำหรับงานนวด)
+
+ทดลองให้หมอนวดกด sensor จริงขณะผู้ป่วยนอนนิ่ง แล้วดูว่า:
+- Baseline กลับมาเท่า V₀ เมื่อปล่อยมือทุกครั้งไหม (ถ้าไม่ → มี creep หรือ hysteresis เยอะ)
+- ค่าไม่กระโดดผิดปกติระหว่างกด (ถ้ากระโดด → housing เลื่อน หรือ contact ไม่นิ่ง)
+
+***
+
+## Phase 6 — Re-calibration Protocol
+
+### เมื่อไหร่ต้อง Recalibrate
+
+ตาม Schofield (2016): เงื่อนไขที่ทำให้ calibration curve เดิมใช้ไม่ได้ [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)
+
+| เหตุการณ์ | ต้อง recalibrate ไหม |
+|---|---|
+| เปลี่ยนผู้ป่วย/อาสาสมัคร | ✅ ทุกครั้ง |
+| เปลี่ยนตำแหน่ง sensor บนร่างกาย | ✅ ทุกครั้ง |
+| ถอดแล้วติดใหม่ (ตำแหน่งเดิม คนเดิม) | ⚠️ แนะนำให้ recheck baseline อย่างน้อย |
+| เปลี่ยน housing หรือ strap | ✅ ทุกครั้ง |
+| ใช้งานต่อเนื่อง > 2 ชั่วโมง | ✅ FSR มี drift สะสม |
+| อุณหภูมิห้องเปลี่ยน > ±5°C | ✅ |
+| เซนเซอร์ตัวเดิม คนเดิม ตำแหน่งเดิม วันเดิม | 🟡 ตรวจ baseline ก่อน ถ้า drift < 2% ข้ามได้ |
+
+### ขั้นตอน Recalibrate ฉบับเร็ว (ถ้าแค่ session ใหม่ คนเดิม ตำแหน่งเดิม)
+
+1. ติด sensor ท่าเดิม strap ตึงเดิม
+2. รอ 5 นาที → บันทึก V_baseline ใหม่
+3. เปรียบเทียบกับ V₀ เดิม → ถ้าต่างกัน < 2% → ใช้ calibration curve เดิมได้ แค่ update V₀
+4. ถ้าต่างกัน ≥ 2% → กลับไป Phase 3 เต็มรูปแบบ [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)
+
+***
+
+## สรุป Timeline ทั้งหมด
+
+```
+Phase 2: บันทึก baseline (รอ 10 นาที + อ่าน 5 นาที)    = ~15 นาที
+Phase 3: Loading 0→80→0 N × 3 reps                      = ~40 นาที
+Phase 4: Curve fitting (Python/Excel)                    = ~20 นาที
+Phase 5: Validation 5 แรงใหม่ + dynamic test            = ~15 นาที
+─────────────────────────────────────────────────────────
+รวมต่อ 1 sensor ต่อ 1 ตำแหน่ง                          = ~90 นาที
+```
+
+ถ้าพริมมี sensor หลายตัว ทำ Phase 3 ต่อเนื่องได้โดยไม่ถอด session ค่ะ แค่สลับตำแหน่งกดทีละตัว [pmc.ncbi.nlm.nih](https://pmc.ncbi.nlm.nih.gov/articles/PMC5903557/)

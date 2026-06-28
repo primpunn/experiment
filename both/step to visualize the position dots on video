@@ -1,0 +1,69 @@
+  # Depth video
+python interpolate_depth.py saved_data/2026-05-11
+python rgb_overlay_video.py saved_data/2026-05-11 --out saved_data/2026-05-11/rgb_overlay_depth.mp4
+
+  # Modify video
+python interpolate_modify.py saved_data/2026-05-11
+python rgb_overlay_video.py saved_data/2026-05-11 --out saved_data/2026-05-11/rgb_overlay_modify.mp4
+
+  # Play both
+vlc saved_data/2026-05-11/rgb_overlay_depth.mp4
+vlc saved_data/2026-05-11/rgb_overlay_modify.mp4
+
+
+ ---
+ Dry-run to check NaN before & NaN after interpolation
+python interpolate_depth.py saved_data/2026-05-11 --dry_run
+
+ ---
+ Physical plausibility
+python verify_l2.py saved_data/2026-05-11
+
+ ---
+ Mask&compare 
+python verify_l3.py saved_data/2026-05-11 --all-joints --step 5
+
+ ---
+ Compare with Modify
+python verify_l3.py saved_data/2026-05-11 --all-joints --script interpolate_modify.py
+
+ ---
+ Visualize graph
+python interpolate_depth.py saved_data/2026-05-11
+python visualize_trajectories.py saved_data/2026-05-11 --save --label depth
+
+python interpolate_modify.py saved_data/2026-05-11
+python visualize_trajectories.py saved_data/2026-05-11 --save --label modify
+ ---
+ 
+Pls check for me which artifacts are occurred in each of these frames: 58, 60, 66, 72, 74, 78, 79, 81, 82, 84, 85, 87, 89, 93, 95, 96, 100, 107, 109, 113, 122, 123, 126, 141-145, 151, 154, 155, 165,    
+  168, 171, 174, 178, 179, 181, and 193.
+
+
+❯ Now I wanna change the pipelines for data recording and inrerpolate method. Firstly, starting with data_recording_45mm.py keeps it the same, no need to change anything. But the interpolate_modify.py    
+  need to copy and save it as the new file named: interpolate_depth.py. The workflow in interpolate_depth.py follows this: 1. before paper1 (artifacts detector): /home/primpunn/Desktop/1st                
+  paper/Paper1_detect4artifacts.pdf  works, I want to applying the depth which are valid in those missing frame or blur marker instaed of just interpolate freely, like if see the blur or missing frame    
+  before interpolate pls check whether we have the valid depth value or not, if we have pls use that value from depth instead because that depth value got from 3D Pose Reconstruction that I will explain  
+  about it later. But this method will protect us from spike. 2. Then paper1 start to detect the artifacts. 3. This step currently we use method from paper3:/home/primpunn/Desktop/1st                     
+  paper/Paper3_interpolate method.pdf  which is kalman filter to interpolate the spike frames by using data position of the frame before missing frame, data posiiton of the frame after the missing or     
+  spike frame, and relationship of position between each marker. In that way when missing frame or slike happenned it will skip update phase in kalman filter make the uncertainty bigger and bigger then   
+  the drift start to getting bigger to in those gap frames. The equation of current kalman filter is K_t = P_t*H^T_t(H_t*P_t*H^T_t+R_t)^-1 and m_t = m_t+K_t(z_t-H_t*m_t) usually z_t will be skip when     
+  missing frame occurred and skip update step, makes the value of unvertainty (P_t) getting bigger. So the new method I wanna use depth value from L515 in the pixel position which is marker should be as  
+  a position 3D from depth map and put it in z^depth_t parameter in update step of kalman filter instaed of just skip this, but in this case need to increase the value of measurement noise (R^depth_t)    
+  higher than normal R^RGB_t because the depth have less accuracy than RGB. In this case, for the frames that RGB works, set the R parameter to low value, but if the frames that RGB blur will set the R   
+  value in the middle level and use with the depth value from L515, and last one is if at the frames that both RGB and depth fail will only use the predict step in kalman filter as currently. So the new  
+  method I wanna apply have this paper as reference: /home/primpunn/Desktop/1st paper/interpolation_L515depth.pdf. The content is start with calibration between 2 camears (which is alrd had). Next is     
+  Sihouette Extraction cocnsists of background subtraction and graph cut. For BG substraction, will remove the background that get from L515 and only keep the therapist and patient. And for Graph Cut     
+  will segment only therapist"s arms from background by using Guassian Mixture Model by creating the probability to check whether each pixel is foreground or background. Next step is 3D Pose              
+  Reconstrction to minimize the cost function, this step is similar to drawing the 3D image on the real image until the position of them are overlap. The equation is E(q_t, o_t) =                         
+  (ramda_m*E_m)+(ramda_s*E_s)+(rambda_d*E_d)+(rambda_e*E_e)+(rambda_c*E_c) which E_m is marker term is the distance between position of marker that estimate from IK and position of marker that measured   
+  by camera. E_s is silhouette to check whether the shape of silhouette from render mesh by using pose from IK (E_m) and the shape silhouette from graph cut (previous step) are overlap or not to get the  
+  not overlapping area. E_d is depth to check whether the depth map which is renderer from pose (E_m) and the depth map from L515 sensor are the same or not to get the different depth in each pixel. E_e  
+  is edge to check whether the border from the render mesh (E_s) by using edge detection and the border from L515 RGB by using Canny edge detector method are the same or not and measure the distance      
+  between those 2 borders by distance transform method. last parameter is E_c which is smoothness use to prevent from the spike pose frame by frame by using this equation: E_c=||q_t-q_t-1|| to check how  
+  big of the gap between pose from current frame and pose from previous frame. Because when pose spike occur the E_c value will have high value, and cost function will be high value too. So this method   
+  called POS will prevent from the spike. For the optimizer using Particle Swarm Optimization (PSO) will send particles to servey the pose space and each particle will update their own position, this     
+  calculate and update process will be repeat for 200 rounds until it gets best pose. The equation is v_k+1 = w(v_k+(c_1*r_1)(P_k-x_k)+(c_2*r_2)(G_k-x_k)) and x_k+1=x_k+v_k+1 which P_k is best pose of    
+  each partical to memorize their own and G_k is best pose of the whole swarm is all of the particles to share their knowledge to the whole group. Please read each file pf the paper I provided you the    
+  folder path. And pls remember to not modify anything in data_recording_45mm.py and interpolate_modify.py but copy the interpolate_modify.py first and named it as interpolate_depth.py and make the       
+  modification in the new file only.   

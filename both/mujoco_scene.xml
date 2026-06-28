@@ -1,0 +1,103 @@
+<mujoco model="massage_therapy">
+  <compiler angle="degree" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.033"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.35 0.35 0.35" specular="0 0 0"/>
+    <rgba haze="0.12 0.2 0.3 1"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient"
+             rgb1="0.45 0.62 0.82" rgb2="0.08 0.08 0.15" width="512" height="512"/>
+    <texture name="floor_tex" type="2d" builtin="checker"
+             rgb1="0.72 0.72 0.72" rgb2="0.55 0.55 0.55" width="512" height="512"/>
+    <material name="floor_mat"  texture="floor_tex" texrepeat="5 5" reflectance="0.08"/>
+    <material name="mat_green"  rgba="0.22 0.48 0.22 1"  reflectance="0.04"/>
+    <material name="skin_mat"   rgba="0.87 0.72 0.53 1"  reflectance="0.05"/>
+    <material name="right_mat"  rgba="0.92 0.28 0.18 0.9" reflectance="0.1"/>
+    <material name="left_mat"   rgba="0.18 0.42 0.90 0.9" reflectance="0.1"/>
+    <material name="head_mat"   rgba="0.85 0.76 0.60 0.55" reflectance="0.05"/>
+    <material name="camera_mat" rgba="0.18 0.18 0.18 1"  reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+
+    <!-- ── Lighting ──────────────────────────────────────────────────────── -->
+    <light name="key"  pos="1.0  0.5 3.0" dir="-0.25 -0.1 -1" diffuse="0.75 0.75 0.75" castshadow="true"/>
+    <light name="fill" pos="-1.0 1.0 2.0" dir="0.3  -0.3 -1"  diffuse="0.35 0.35 0.35" castshadow="false"/>
+    <light name="back" pos="0.0 -1.5 1.5" dir="0    0.4  -1"  diffuse="0.25 0.25 0.25" castshadow="false"/>
+
+    <!-- ── Floor ─────────────────────────────────────────────────────────── -->
+    <geom name="floor" type="plane" size="4 4 0.01" material="floor_mat"
+          friction="1 0.005 0.0001" contype="1" conaffinity="1"/>
+
+    <!-- ── Therapy mat ───────────────────────────────────────────────────── -->
+    <!--   Long green mat along -Y axis from world origin.
+           Adjust pos/size if your patient is positioned differently.       -->
+    <geom name="therapy_mat" type="box" pos="0 -0.4 0.012"
+          size="0.5 0.9 0.012" material="mat_green"/>
+
+    <!-- ── Patient (lying supine, head toward +Y, feet toward -Y) ──────── -->
+    <!--   pos=  world-frame root of patient body.
+           Tune pos to place calves where your hand joint data clusters.    -->
+    <body name="patient" pos="0 0.25 0.07">
+      <geom name="pat_torso"    type="capsule" fromto="0 -0.15 0   0  0.38 0"  size="0.135" material="skin_mat"/>
+      <geom name="pat_head"     type="sphere"  pos="0  0.56  0.07"             size="0.095" material="skin_mat"/>
+      <geom name="pat_r_thigh"  type="capsule" fromto=" 0.10 -0.15 0   0.10 -0.52  0" size="0.068" material="skin_mat"/>
+      <geom name="pat_l_thigh"  type="capsule" fromto="-0.10 -0.15 0  -0.10 -0.52  0" size="0.068" material="skin_mat"/>
+      <!--  Calves = therapy target area  -->
+      <geom name="pat_r_calf"   type="capsule" fromto=" 0.10 -0.52 0   0.08 -0.82  0.06" size="0.050" material="skin_mat"/>
+      <geom name="pat_l_calf"   type="capsule" fromto="-0.10 -0.52 0  -0.08 -0.82  0.06" size="0.050" material="skin_mat"/>
+      <geom name="pat_r_foot"   type="capsule" fromto=" 0.08 -0.82 0.06  0.07 -0.96 0.04" size="0.038" material="skin_mat"/>
+      <geom name="pat_l_foot"   type="capsule" fromto="-0.08 -0.82 0.06 -0.07 -0.96 0.04" size="0.038" material="skin_mat"/>
+    </body>
+
+    <!-- ── Therapist: right arm (red/orange) ─────────────────────────────
+         Mocap bodies — positions driven every frame from _processed.txt.
+         Initial pos values are just placeholders; mujoco_playback.py
+         overwrites them at runtime.                                        -->
+
+    <body name="right_wrist" mocap="true" pos="0.1 -0.7 0.3">
+      <geom name="right_wrist_geom" type="sphere" size="0.026" material="right_mat"/>
+    </body>
+
+    <body name="right_elbow" mocap="true" pos="0.3 -0.4 0.55">
+      <geom name="right_elbow_geom" type="sphere" size="0.026" material="right_mat"/>
+    </body>
+
+    <!--  Forearm capsule: positioned at wrist-elbow midpoint by playback script.
+          size[0]=radius, size[1]=half-length (updated each frame).        -->
+    <body name="right_forearm" mocap="true" pos="0.2 -0.55 0.42">
+      <geom name="right_forearm_geom" type="capsule" size="0.022 0.14" material="right_mat"/>
+    </body>
+
+    <!-- ── Therapist: left arm (blue) ────────────────────────────────── -->
+
+    <body name="left_wrist" mocap="true" pos="-0.1 -0.7 0.3">
+      <geom name="left_wrist_geom" type="sphere" size="0.026" material="left_mat"/>
+    </body>
+
+    <body name="left_elbow" mocap="true" pos="-0.3 -0.4 0.55">
+      <geom name="left_elbow_geom" type="sphere" size="0.026" material="left_mat"/>
+    </body>
+
+    <body name="left_forearm" mocap="true" pos="-0.2 -0.55 0.42">
+      <geom name="left_forearm_geom" type="capsule" size="0.022 0.14" material="left_mat"/>
+    </body>
+
+    <!-- ── Therapist head (D435i camera position) ────────────────────── -->
+    <body name="therapist_head" mocap="true" pos="0 0 1.3">
+      <geom name="head_geom" type="sphere" size="0.085" material="head_mat"/>
+    </body>
+
+    <!-- ── L515 camera (static, placed from T_world_L515.txt) ─────────── -->
+    <body name="l515_camera" mocap="true" pos="1 0 0.8">
+      <geom name="l515_body_geom" type="box"    size="0.055 0.055 0.04" material="camera_mat"/>
+      <geom name="l515_lens_geom" type="cylinder" pos="0 0 0.04" size="0.025 0.008"
+            rgba="0.05 0.05 0.05 1"/>
+    </body>
+
+  </worldbody>
+</mujoco>
